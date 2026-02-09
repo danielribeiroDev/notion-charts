@@ -39,13 +39,17 @@ export default function Dashboard() {
     }
 
     if (editingWorkspace) {
-      updateWorkspace(editingWorkspace, { name: workspaceName.trim() });
+      updateWorkspace(editingWorkspace, {
+        name: workspaceName.trim(),
+      });
       toast({
         title: 'Workspace atualizado',
         description: `"${workspaceName}" foi atualizado com sucesso.`,
       });
     } else {
-      addWorkspace({ name: workspaceName.trim() });
+      addWorkspace({
+        name: workspaceName.trim(),
+      });
       toast({
         title: 'Workspace criado',
         description: `"${workspaceName}" foi criado com sucesso.`,
@@ -57,9 +61,11 @@ export default function Dashboard() {
     setEditingWorkspace(null);
   };
 
-  const handleEdit = (id: string, name: string) => {
-    setEditingWorkspace(id);
-    setWorkspaceName(name);
+  const handleEdit = (workspaceId: string) => {
+    const workspace = workspaces.find((w) => w.id === workspaceId);
+    if (!workspace) return;
+    setEditingWorkspace(workspaceId);
+    setWorkspaceName(workspace.name);
     setIsModalOpen(true);
   };
 
@@ -85,7 +91,7 @@ export default function Dashboard() {
             Organize seus gráficos em workspaces
           </p>
         </div>
-        <Button 
+        <Button
           onClick={() => {
             setEditingWorkspace(null);
             setWorkspaceName('');
@@ -109,20 +115,27 @@ export default function Dashboard() {
             <p className="mb-6 text-center text-muted-foreground">
               Crie seu primeiro workspace para começar a organizar seus gráficos
             </p>
-            <Button 
-              onClick={() => setIsModalOpen(true)}
+            <Button
+              onClick={() => {
+                setEditingWorkspace(null);
+                setWorkspaceName('');
+                setIsModalOpen(true);
+              }}
               className="neon-glow"
             >
               <Plus className="mr-2 h-4 w-4" />
               Create Workspace
             </Button>
+            <p className="mt-2 text-xs text-muted-foreground">
+              Dica: você pode renomear o workspace a qualquer momento.
+            </p>
           </CardContent>
         </Card>
       ) : (
         <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
           {workspaces.map((workspace) => (
-            <Card 
-              key={workspace.id} 
+            <Card
+              key={workspace.id}
               className="group transition-all hover:border-primary/50 hover:shadow-lg hover:shadow-primary/5"
             >
               <CardHeader className="flex flex-row items-start justify-between space-y-0">
@@ -134,8 +147,8 @@ export default function Dashboard() {
                 </div>
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
-                    <Button 
-                      variant="ghost" 
+                    <Button
+                      variant="ghost"
                       size="icon"
                       className="opacity-0 transition-opacity group-hover:opacity-100"
                     >
@@ -143,11 +156,11 @@ export default function Dashboard() {
                     </Button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end">
-                    <DropdownMenuItem onClick={() => handleEdit(workspace.id, workspace.name)}>
+                    <DropdownMenuItem onClick={() => handleEdit(workspace.id)}>
                       <Edit2 className="mr-2 h-4 w-4" />
                       Editar
                     </DropdownMenuItem>
-                    <DropdownMenuItem 
+                    <DropdownMenuItem
                       onClick={() => handleDelete(workspace.id, workspace.name)}
                       className="text-destructive focus:text-destructive"
                     >
@@ -178,7 +191,7 @@ export default function Dashboard() {
               {editingWorkspace ? 'Editar Workspace' : 'Criar Workspace'}
             </DialogTitle>
             <DialogDescription>
-              {editingWorkspace 
+              {editingWorkspace
                 ? 'Altere o nome do seu workspace'
                 : 'Dê um nome para seu novo workspace'
               }
@@ -197,6 +210,9 @@ export default function Dashboard() {
                 onKeyDown={(e) => e.key === 'Enter' && handleCreateWorkspace()}
               />
             </div>
+            <p className="text-xs text-muted-foreground">
+              Dica: você pode renomear o workspace a qualquer momento.
+            </p>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setIsModalOpen(false)}>

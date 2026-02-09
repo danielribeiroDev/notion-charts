@@ -1,8 +1,8 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { Plus, ArrowLeft, BarChart3, LineChart, PieChart, TrendingUp, MoreVertical, Trash2, Edit2, Copy, ExternalLink } from 'lucide-react';
+import { Plus, ArrowLeft, TrendingUp, Database, BarChart3 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import {
   Dialog,
   DialogContent,
@@ -11,12 +11,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
 import {
   Select,
@@ -25,35 +19,103 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { useAppStore, type ChartConfig } from '@/store/useAppStore';
+import { useAppStore, type ChartConfig, type ChartMetric } from '@/store/useAppStore';
 import { useToast } from '@/hooks/use-toast';
+import { fetchNotionDatabases, type NotionDatabaseOption } from '@/lib/notion';
+import { useNotionDatabaseMeta } from '@/hooks/useNotionDatabaseMeta';
+import { useNotionMetricAggregates } from '@/hooks/useNotionMetricAggregates';
+import { ChartCard } from '@/components/charts/ChartCard';
+import { MetricFields } from '@/components/charts/MetricFields';
+import { timeOptions, NO_DATE_VALUE, NO_FILTER_VALUE } from '@/lib/timeRanges';
+import { createDefaultMetric, normalizeMetrics, validateMetrics } from '@/utils/metrics';
 
 const chartTypeIcons = {
-  bar: BarChart3,
-  line: LineChart,
-  pie: PieChart,
   stats: TrendingUp,
-};
-
-const chartTypeLabels = {
-  bar: 'Gráfico de Barras',
-  line: 'Gráfico de Linhas',
-  pie: 'Gráfico de Pizza',
-  stats: 'Card de Estatísticas',
 };
 
 export default function WorkspaceCharts() {
   const { workspaceId } = useParams<{ workspaceId: string }>();
-  const { workspaces, charts, addChart, updateChart, deleteChart } = useAppStore();
+  const { workspaces, charts, addChart, updateChart, deleteChart, notionConnection } = useAppStore();
   const { toast } = useToast();
-  
+
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingChart, setEditingChart] = useState<string | null>(null);
   const [chartName, setChartName] = useState('');
-  const [chartType, setChartType] = useState<ChartConfig['type']>('bar');
+  const [chartType, setChartType] = useState<ChartConfig['type']>('stats');
+  const [selectedDatabaseId, setSelectedDatabaseId] = useState('');
+  const [databases, setDatabases] = useState<NotionDatabaseOption[]>([]);
+  const [isLoadingDatabases, setIsLoadingDatabases] = useState(false);
+  const [databaseError, setDatabaseError] = useState<string | null>(null);
+  const [metrics, setMetrics] = useState<ChartMetric[]>([]);
+
+  const createMetricId = () => Math.random().toString(36).slice(2, 9);
+
+  const addMetric = () => {
+    setMetrics((prev) => [...prev, createDefaultMetric(numberProps, dateProps, filterProps, createMetricId)]);
+  };
+
+  const removeMetric = (metricId: string) => {
+    setMetrics((prev) => (prev.length <= 1 ? prev : prev.filter((m) => m.id !== metricId)));
+  };
+
+  const updateMetric = (metricId: string, updater: (metric: ChartMetric) => ChartMetric) => {
+    setMetrics((prev) => prev.map((metric) => (metric.id === metricId ? updater(metric) : metric)));
+  };
 
   const workspace = workspaces.find((w) => w.id === workspaceId);
-  const workspaceCharts = charts.filter((c) => c.workspaceId === workspaceId);
+  const workspaceCharts = useMemo(() => charts.filter((c) => c.workspaceId === workspaceId), [charts, workspaceId]);
+
+  const {
+    numberProps,
+    dateProps,
+    filterProps,
+    isLoadingNumberProps,
+    isLoadingDateProps,
+    isLoadingFilterProps,
+    numberPropsError,
+    datePropsError,
+    filterPropsError,
+  } = useNotionDatabaseMeta({ notionConnection, databaseId: selectedDatabaseId, enabled: isModalOpen });
+
+  const { aggregates } = useNotionMetricAggregates(workspaceCharts, notionConnection);
+
+  useEffect(() => {
+    if (!isModalOpen || !notionConnection) return;
+    if (databases.length > 0 && !databaseError) return;
+    setIsLoadingDatabases(true);
+    setDatabaseError(null);
+    fetchNotionDatabases(notionConnection.accessToken)
+      .then((data) => setDatabases(data))
+      .catch((error) => {
+        const message = error instanceof Error ? error.message : 'Não foi possível carregar bases do Notion.';
+        setDatabaseError(message);
+        toast({
+          title: 'Erro ao carregar bases',
+          description: message,
+          variant: 'destructive',
+        });
+      })
+      .finally(() => setIsLoadingDatabases(false));
+  }, [isModalOpen, notionConnection, databases.length, databaseError, toast]);
+
+  useEffect(() => {
+    if (!isModalOpen || !selectedDatabaseId) {
+      setMetrics([]);
+    }
+  }, [isModalOpen, selectedDatabaseId]);
+
+  useEffect(() => {
+    if (!isModalOpen || !selectedDatabaseId) return;
+
+    setMetrics((prev) => {
+      if (prev.length === 0 && numberProps.length > 0) {
+        return [createDefaultMetric(numberProps, dateProps, filterProps, createMetricId)];
+      }
+
+      if (prev.length === 0) return prev;
+      return normalizeMetrics(prev, numberProps, dateProps, filterProps);
+    });
+  }, [isModalOpen, selectedDatabaseId, numberProps, dateProps, filterProps]);
 
   if (!workspace) {
     return (
@@ -82,8 +144,53 @@ export default function WorkspaceCharts() {
       return;
     }
 
+    if (!notionConnection) {
+      toast({
+        title: 'Conexão com Notion necessária',
+        description: 'Conecte-se ao Notion antes de criar gráficos.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    if (!selectedDatabaseId) {
+      toast({
+        title: 'Selecione uma base',
+        description: 'Escolha uma database do Notion para o gráfico.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    const normalizedMetrics = normalizeMetrics(metrics, numberProps, dateProps, filterProps);
+    const validation = validateMetrics(normalizedMetrics);
+    if (!validation.ok) {
+      toast({
+        title: 'Configure as métricas',
+        description: validation.message,
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    const metricsPayload: ChartMetric[] = normalizedMetrics.map((metric, index) => ({
+      id: metric.id || createMetricId(),
+      name: metric.name || `Métrica ${index + 1}`,
+      valueColumn: metric.valueColumn,
+      filters: metric.filters?.property && metric.filters.value
+        ? { property: metric.filters.property, value: metric.filters.value, type: metric.filters.type }
+        : undefined,
+      timeRange: metric.timeRange || 'none',
+      dateProperty: metric.dateProperty || undefined,
+    }));
+
     if (editingChart) {
-      updateChart(editingChart, { name: chartName.trim(), type: chartType });
+      updateChart(editingChart, {
+        name: chartName.trim(),
+        type: chartType,
+        notionDatabaseId: selectedDatabaseId,
+        metrics: metricsPayload,
+      });
       toast({
         title: 'Gráfico atualizado',
         description: `"${chartName}" foi atualizado com sucesso.`,
@@ -93,8 +200,8 @@ export default function WorkspaceCharts() {
         workspaceId: workspaceId!,
         name: chartName.trim(),
         type: chartType,
-        notionDatabaseId: '',
-        valueColumn: '',
+        notionDatabaseId: selectedDatabaseId,
+        metrics: metricsPayload,
       });
       toast({
         title: 'Gráfico criado',
@@ -104,7 +211,9 @@ export default function WorkspaceCharts() {
 
     setIsModalOpen(false);
     setChartName('');
-    setChartType('bar');
+    setChartType('stats');
+    setSelectedDatabaseId('');
+    setMetrics([]);
     setEditingChart(null);
   };
 
@@ -112,6 +221,18 @@ export default function WorkspaceCharts() {
     setEditingChart(chart.id);
     setChartName(chart.name);
     setChartType(chart.type);
+    setSelectedDatabaseId(chart.notionDatabaseId || '');
+    const existingMetrics: ChartMetric[] = chart.metrics?.length
+      ? chart.metrics.map((m, index) => ({ ...m, id: m.id || `${chart.id}-${index}`, timeRange: m.timeRange || 'none', dateProperty: m.dateProperty }))
+      : [{
+        id: createMetricId(),
+        name: chart.name,
+        valueColumn: chart.valueColumn || '',
+        filters: chart.filters as ChartMetric['filters'],
+        timeRange: 'none',
+        dateProperty: undefined,
+      }];
+    setMetrics(existingMetrics);
     setIsModalOpen(true);
   };
 
@@ -147,11 +268,13 @@ export default function WorkspaceCharts() {
               Gerencie os gráficos deste workspace
             </p>
           </div>
-          <Button 
+          <Button
             onClick={() => {
               setEditingChart(null);
               setChartName('');
-              setChartType('bar');
+              setChartType('stats');
+              setSelectedDatabaseId('');
+              setMetrics([]);
               setIsModalOpen(true);
             }}
             className="neon-glow"
@@ -173,8 +296,15 @@ export default function WorkspaceCharts() {
             <p className="mb-6 text-center text-muted-foreground">
               Crie seu primeiro gráfico para visualizar seus dados do Notion
             </p>
-            <Button 
-              onClick={() => setIsModalOpen(true)}
+            <Button
+              onClick={() => {
+                setEditingChart(null);
+                setChartName('');
+                setChartType('stats');
+                setSelectedDatabaseId('');
+                setMetrics([]);
+                setIsModalOpen(true);
+              }}
               className="neon-glow"
             >
               <Plus className="mr-2 h-4 w-4" />
@@ -185,66 +315,29 @@ export default function WorkspaceCharts() {
       ) : (
         <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
           {workspaceCharts.map((chart) => {
-            const IconComponent = chartTypeIcons[chart.type];
+            const IconComponent = chartTypeIcons[chart.type] || TrendingUp;
+            const metricsList: ChartMetric[] = chart.metrics && chart.metrics.length > 0
+              ? chart.metrics
+              : [{
+                id: chart.id,
+                name: chart.name,
+                valueColumn: chart.valueColumn || '',
+                filters: chart.filters as ChartMetric['filters'],
+                timeRange: 'none',
+                dateProperty: undefined,
+              }];
+
             return (
-              <Card 
-                key={chart.id} 
-                className="group transition-all hover:border-primary/50 hover:shadow-lg hover:shadow-primary/5"
-              >
-                <CardHeader className="flex flex-row items-start justify-between space-y-0">
-                  <div className="flex items-start gap-3">
-                    <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10">
-                      <IconComponent className="h-5 w-5 text-primary" />
-                    </div>
-                    <div className="space-y-1">
-                      <CardTitle className="text-lg">{chart.name}</CardTitle>
-                      <CardDescription>
-                        {chartTypeLabels[chart.type]}
-                      </CardDescription>
-                    </div>
-                  </div>
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <Button 
-                        variant="ghost" 
-                        size="icon"
-                        className="opacity-0 transition-opacity group-hover:opacity-100"
-                      >
-                        <MoreVertical className="h-4 w-4" />
-                      </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end">
-                      <DropdownMenuItem onClick={() => handleEdit(chart)}>
-                        <Edit2 className="mr-2 h-4 w-4" />
-                        Editar
-                      </DropdownMenuItem>
-                      <DropdownMenuItem onClick={() => handleCopyEmbedLink(chart.id)}>
-                        <Copy className="mr-2 h-4 w-4" />
-                        Copiar Link Embed
-                      </DropdownMenuItem>
-                      <DropdownMenuItem asChild>
-                        <Link to={`/embed/${chart.id}`} target="_blank">
-                          <ExternalLink className="mr-2 h-4 w-4" />
-                          Ver Preview
-                        </Link>
-                      </DropdownMenuItem>
-                      <DropdownMenuItem 
-                        onClick={() => handleDelete(chart.id, chart.name)}
-                        className="text-destructive focus:text-destructive"
-                      >
-                        <Trash2 className="mr-2 h-4 w-4" />
-                        Excluir
-                      </DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                </CardHeader>
-                <CardContent>
-                  {/* Chart Preview Placeholder */}
-                  <div className="flex h-32 items-center justify-center rounded-lg bg-secondary/50">
-                    <IconComponent className="h-12 w-12 text-muted-foreground/50" />
-                  </div>
-                </CardContent>
-              </Card>
+              <ChartCard
+                key={chart.id}
+                chart={chart}
+                metrics={metricsList}
+                aggregates={aggregates[chart.id] ?? {}}
+                IconComponent={IconComponent}
+                onEdit={handleEdit}
+                onCopyEmbedLink={handleCopyEmbedLink}
+                onDelete={handleDelete}
+              />
             );
           })}
         </div>
@@ -252,13 +345,13 @@ export default function WorkspaceCharts() {
 
       {/* Create/Edit Modal */}
       <Dialog open={isModalOpen} onOpenChange={setIsModalOpen}>
-        <DialogContent>
+        <DialogContent className="max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>
               {editingChart ? 'Editar Gráfico' : 'Criar Gráfico'}
             </DialogTitle>
             <DialogDescription>
-              {editingChart 
+              {editingChart
                 ? 'Altere as configurações do seu gráfico'
                 : 'Configure seu novo gráfico'
               }
@@ -277,32 +370,12 @@ export default function WorkspaceCharts() {
               />
             </div>
             <div className="space-y-2">
-              <label className="text-sm font-medium">
-                Tipo de Gráfico
-              </label>
+              <label className="text-sm font-medium">Tipo de Gráfico</label>
               <Select value={chartType} onValueChange={(v) => setChartType(v as ChartConfig['type'])}>
                 <SelectTrigger>
-                  <SelectValue />
+                  <SelectValue placeholder="Card de Estatísticas" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="bar">
-                    <div className="flex items-center gap-2">
-                      <BarChart3 className="h-4 w-4" />
-                      Gráfico de Barras
-                    </div>
-                  </SelectItem>
-                  <SelectItem value="line">
-                    <div className="flex items-center gap-2">
-                      <LineChart className="h-4 w-4" />
-                      Gráfico de Linhas
-                    </div>
-                  </SelectItem>
-                  <SelectItem value="pie">
-                    <div className="flex items-center gap-2">
-                      <PieChart className="h-4 w-4" />
-                      Gráfico de Pizza
-                    </div>
-                  </SelectItem>
                   <SelectItem value="stats">
                     <div className="flex items-center gap-2">
                       <TrendingUp className="h-4 w-4" />
@@ -311,6 +384,91 @@ export default function WorkspaceCharts() {
                   </SelectItem>
                 </SelectContent>
               </Select>
+            </div>
+
+            <div className="space-y-2">
+              <div className="flex items-center justify-between text-sm font-medium">
+                <span>Database do Notion</span>
+                {databaseError && <span className="text-xs text-destructive">Erro</span>}
+              </div>
+              <Select
+                value={selectedDatabaseId}
+                onValueChange={(value) => setSelectedDatabaseId(value)}
+                disabled={!notionConnection || isLoadingDatabases}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder={isLoadingDatabases ? 'Carregando bases...' : 'Selecione uma base compartilhada'} />
+                </SelectTrigger>
+                <SelectContent>
+                  {isLoadingDatabases && (
+                    <SelectItem value="loading" disabled>
+                      Carregando bases...
+                    </SelectItem>
+                  )}
+                  {!isLoadingDatabases && databases.length === 0 && !databaseError && (
+                    <SelectItem value="empty" disabled>
+                      Nenhuma base encontrada para esta integração
+                    </SelectItem>
+                  )}
+                  {!isLoadingDatabases && databases.map((db) => (
+                    <SelectItem key={db.id} value={db.id}>
+                      <span className="flex items-center gap-2">
+                        <Database className="h-4 w-4" />
+                        <span className="truncate">{db.title}</span>
+                      </span>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">Compartilhe a database com a integração do Notion para aparecer aqui.</p>
+            </div>
+
+            <div className="space-y-3">
+              <div className="flex items-center justify-between text-sm font-medium">
+                <span>Métricas</span>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={addMetric}
+                  disabled={!selectedDatabaseId || numberProps.length === 0}
+                >
+                  <Plus className="mr-2 h-4 w-4" />
+                  Adicionar métrica
+                </Button>
+              </div>
+              <p className="text-xs text-muted-foreground">Monte vários cartões dentro do mesmo chart.</p>
+
+              {metrics.length === 0 && (
+                <p className="rounded-md border border-dashed border-border p-3 text-sm text-muted-foreground">
+                  Selecione uma database para habilitar métricas.
+                </p>
+              )}
+
+              <div className="space-y-3">
+                {metrics.map((metric, index) => (
+                  <MetricFields
+                    key={metric.id}
+                    metric={metric}
+                    index={index}
+                    metricsLength={metrics.length}
+                    numberProps={numberProps}
+                    dateProps={dateProps}
+                    filterProps={filterProps}
+                    timeOptions={timeOptions}
+                    NO_FILTER_VALUE={NO_FILTER_VALUE}
+                    NO_DATE_VALUE={NO_DATE_VALUE}
+                    isLoadingNumberProps={isLoadingNumberProps}
+                    isLoadingDateProps={isLoadingDateProps}
+                    isLoadingFilterProps={isLoadingFilterProps}
+                    numberPropsError={numberPropsError}
+                    datePropsError={datePropsError}
+                    filterPropsError={filterPropsError}
+                    selectedDatabaseId={selectedDatabaseId}
+                    updateMetric={updateMetric}
+                    removeMetric={removeMetric}
+                  />
+                ))}
+              </div>
             </div>
           </div>
           <DialogFooter>

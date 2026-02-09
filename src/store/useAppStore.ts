@@ -11,10 +11,28 @@ export interface NotionConnection {
 export interface Workspace {
   id: string;
   name: string;
+  notionPageId?: string;
+  notionPageTitle?: string;
+  notionPageUrl?: string;
+  notionPageIcon?: string;
+  notionPageType?: 'page' | 'database';
   notionDatabaseId?: string;
   notionDatabaseName?: string;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface ChartMetric {
+  id: string;
+  name: string;
+  valueColumn: string;
+  filters?: {
+    property?: string;
+    value?: string;
+    type?: 'select' | 'multi_select' | 'status' | 'checkbox' | 'formula';
+  };
+  timeRange?: 'none' | 'last7d' | 'last30d' | 'last90d' | 'last12m';
+  dateProperty?: string;
 }
 
 export interface ChartConfig {
@@ -23,9 +41,11 @@ export interface ChartConfig {
   name: string;
   type: 'bar' | 'line' | 'pie' | 'stats';
   notionDatabaseId: string;
-  valueColumn: string;
+  // valueColumn is kept for backwards compatibility with single-metric charts
+  valueColumn?: string;
   labelColumn?: string;
   filters?: Record<string, unknown>;
+  metrics?: ChartMetric[];
   createdAt: string;
   updatedAt: string;
 }
@@ -35,23 +55,23 @@ interface AppState {
   notionConnection: NotionConnection | null;
   setNotionConnection: (connection: NotionConnection | null) => void;
   isAuthenticated: boolean;
-  
+
   // Workspaces
   workspaces: Workspace[];
   addWorkspace: (workspace: Omit<Workspace, 'id' | 'createdAt' | 'updatedAt'>) => Workspace;
   updateWorkspace: (id: string, updates: Partial<Workspace>) => void;
   deleteWorkspace: (id: string) => void;
-  
+
   // Charts
   charts: ChartConfig[];
   addChart: (chart: Omit<ChartConfig, 'id' | 'createdAt' | 'updatedAt'>) => ChartConfig;
   updateChart: (id: string, updates: Partial<ChartConfig>) => void;
   deleteChart: (id: string) => void;
-  
+
   // UI State
   sidebarCollapsed: boolean;
   setSidebarCollapsed: (collapsed: boolean) => void;
-  
+
   // Actions
   logout: () => void;
 }
@@ -64,9 +84,9 @@ export const useAppStore = create<AppState>()(
       // Auth
       notionConnection: null,
       isAuthenticated: false,
-      setNotionConnection: (connection) => 
+      setNotionConnection: (connection) =>
         set({ notionConnection: connection, isAuthenticated: !!connection }),
-      
+
       // Workspaces
       workspaces: [],
       addWorkspace: (workspace) => {
@@ -90,12 +110,26 @@ export const useAppStore = create<AppState>()(
           workspaces: state.workspaces.filter((w) => w.id !== id),
           charts: state.charts.filter((c) => c.workspaceId !== id),
         })),
-      
+
       // Charts
       charts: [],
       addChart: (chart) => {
+        const hasMetrics = Array.isArray(chart.metrics) && chart.metrics.length > 0;
+        const metrics = hasMetrics
+          ? chart.metrics!.map((m) => ({ ...m, timeRange: m.timeRange ?? 'none' }))
+          : [{
+            id: generateId(),
+            name: chart.name,
+            valueColumn: chart.valueColumn || '',
+            filters: chart.filters,
+            timeRange: 'none',
+            dateProperty: undefined,
+          }];
         const newChart: ChartConfig = {
           ...chart,
+          metrics,
+          valueColumn: metrics[0]?.valueColumn,
+          filters: hasMetrics ? undefined : chart.filters,
           id: generateId(),
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
@@ -106,18 +140,34 @@ export const useAppStore = create<AppState>()(
       updateChart: (id, updates) =>
         set((state) => ({
           charts: state.charts.map((c) =>
-            c.id === id ? { ...c, ...updates, updatedAt: new Date().toISOString() } : c
+            c.id === id
+              ? (() => {
+                const nextMetrics = Array.isArray(updates.metrics) && updates.metrics.length > 0
+                  ? updates.metrics.map((m) => ({ ...m, timeRange: m.timeRange ?? 'none' }))
+                  : c.metrics && c.metrics.length > 0
+                    ? c.metrics
+                    : [{ id: generateId(), name: updates.name || c.name, valueColumn: updates.valueColumn || c.valueColumn || '', filters: updates.filters || c.filters, timeRange: 'none', dateProperty: undefined }];
+                return {
+                  ...c,
+                  ...updates,
+                  metrics: nextMetrics,
+                  valueColumn: nextMetrics[0]?.valueColumn,
+                  filters: updates.metrics ? undefined : updates.filters ?? c.filters,
+                  updatedAt: new Date().toISOString(),
+                };
+              })()
+              : c
           ),
         })),
       deleteChart: (id) =>
         set((state) => ({
           charts: state.charts.filter((c) => c.id !== id),
         })),
-      
+
       // UI State
       sidebarCollapsed: false,
       setSidebarCollapsed: (collapsed) => set({ sidebarCollapsed: collapsed }),
-      
+
       // Actions
       logout: () =>
         set({

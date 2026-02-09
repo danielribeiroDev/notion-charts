@@ -11,6 +11,13 @@ export default defineConfig(({ mode }) => ({
     hmr: {
       overlay: false,
     },
+    proxy: {
+      "/api/notion": {
+        target: "https://api.notion.com",
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api\/notion/, "/v1"),
+      },
+    },
   },
   plugins: [react(), mode === "development" && componentTagger()].filter(Boolean),
   resolve: {

@@ -1,5 +1,6 @@
 import { useTheme } from "next-themes";
-import { Toaster as Sonner, toast } from "sonner";
+/* eslint-disable react-refresh/only-export-components */
+import { toast, Toaster as Sonner } from "sonner";
 
 type ToasterProps = React.ComponentProps<typeof Sonner>;
 

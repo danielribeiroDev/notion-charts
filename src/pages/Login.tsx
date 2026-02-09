@@ -6,6 +6,7 @@ import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { useAppStore } from '@/store/useAppStore';
 import { useToast } from '@/hooks/use-toast';
+import { verifyNotionIntegration } from '@/lib/notion';
 
 export default function Login() {
   const navigate = useNavigate();
@@ -27,22 +28,26 @@ export default function Login() {
 
     setIsLoading(true);
 
-    // Simulate validation - in a real app, this would verify the token with Notion API
-    setTimeout(() => {
-      setNotionConnection({
-        accessToken: accessToken.trim(),
-        workspaceName: 'My Workspace',
-        botId: 'simulated-bot-id',
-      });
-      
+    try {
+      const connection = await verifyNotionIntegration(accessToken.trim());
+      setNotionConnection(connection);
+
       toast({
         title: 'Conectado com sucesso!',
         description: 'Sua conta do Notion foi vinculada.',
       });
-      
+
       navigate('/dashboard');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Não foi possível conectar ao Notion.';
+      toast({
+        title: 'Erro ao conectar',
+        description: message,
+        variant: 'destructive',
+      });
+    } finally {
       setIsLoading(false);
-    }, 1500);
+    }
   };
 
   return (
@@ -101,8 +106,8 @@ export default function Login() {
               </div>
             </div>
 
-            <Button 
-              className="w-full neon-glow" 
+            <Button
+              className="w-full neon-glow"
               size="lg"
               onClick={() => setStep('token')}
             >
@@ -166,8 +171,8 @@ export default function Login() {
             </div>
 
             <div className="flex gap-3">
-              <Button 
-                variant="outline" 
+              <Button
+                variant="outline"
                 className="flex-1"
                 onClick={() => setStep('intro')}
               >

@@ -1,4 +1,5 @@
 import type { Config } from "tailwindcss";
+import tailwindcssAnimate from "tailwindcss-animate";
 
 export default {
   darkMode: ["class"],
@@ -81,11 +82,11 @@ export default {
           to: { height: "0" },
         },
         "pulse-neon": {
-          "0%, 100%": { 
-            boxShadow: "0 0 20px hsl(var(--neon) / 0.3), 0 0 40px hsl(var(--neon) / 0.1)" 
+          "0%, 100%": {
+            boxShadow: "0 0 20px hsl(var(--neon) / 0.3), 0 0 40px hsl(var(--neon) / 0.1)"
           },
-          "50%": { 
-            boxShadow: "0 0 30px hsl(var(--neon) / 0.5), 0 0 60px hsl(var(--neon) / 0.2)" 
+          "50%": {
+            boxShadow: "0 0 30px hsl(var(--neon) / 0.5), 0 0 60px hsl(var(--neon) / 0.2)"
           },
         },
         "fade-in": {
@@ -101,5 +102,5 @@ export default {
       },
     },
   },
-  plugins: [require("tailwindcss-animate")],
+  plugins: [tailwindcssAnimate],
 } satisfies Config;
