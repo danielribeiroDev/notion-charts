@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Plus, MoreVertical, BarChart3, Trash2, Edit2 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
@@ -20,15 +20,33 @@ import {
 import { Input } from '@/components/ui/input';
 import { useAppStore } from '@/store/useAppStore';
 import { useToast } from '@/hooks/use-toast';
+import { createWorkspace, deleteWorkspaceApi, fetchWorkspaces, updateWorkspaceApi } from '@/lib/workspaces';
 
 export default function Dashboard() {
-  const { workspaces, addWorkspace, updateWorkspace, deleteWorkspace, charts } = useAppStore();
+  const { workspaces, setWorkspaces, charts } = useAppStore();
   const { toast } = useToast();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingWorkspace, setEditingWorkspace] = useState<string | null>(null);
   const [workspaceName, setWorkspaceName] = useState('');
+  const [loading, setLoading] = useState(false);
 
-  const handleCreateWorkspace = () => {
+  useEffect(() => {
+    const load = async () => {
+      setLoading(true);
+      try {
+        const data = await fetchWorkspaces();
+        setWorkspaces(data);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Não foi possível carregar workspaces.';
+        toast({ title: 'Erro', description: message, variant: 'destructive' });
+      } finally {
+        setLoading(false);
+      }
+    };
+    load();
+  }, [setWorkspaces, toast]);
+
+  const handleCreateWorkspace = async () => {
     if (!workspaceName.trim()) {
       toast({
         title: 'Nome obrigatório',
@@ -38,22 +56,25 @@ export default function Dashboard() {
       return;
     }
 
-    if (editingWorkspace) {
-      updateWorkspace(editingWorkspace, {
-        name: workspaceName.trim(),
-      });
-      toast({
-        title: 'Workspace atualizado',
-        description: `"${workspaceName}" foi atualizado com sucesso.`,
-      });
-    } else {
-      addWorkspace({
-        name: workspaceName.trim(),
-      });
-      toast({
-        title: 'Workspace criado',
-        description: `"${workspaceName}" foi criado com sucesso.`,
-      });
+    try {
+      if (editingWorkspace) {
+        const updated = await updateWorkspaceApi(editingWorkspace, workspaceName.trim());
+        setWorkspaces(workspaces.map((w) => (w.id === updated.id ? updated : w)));
+        toast({
+          title: 'Workspace atualizado',
+          description: `"${workspaceName}" foi atualizado com sucesso.`,
+        });
+      } else {
+        const created = await createWorkspace(workspaceName.trim());
+        setWorkspaces([...workspaces, created]);
+        toast({
+          title: 'Workspace criado',
+          description: `"${workspaceName}" foi criado com sucesso.`,
+        });
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Não foi possível salvar o workspace.';
+      toast({ title: 'Erro', description: message, variant: 'destructive' });
     }
 
     setIsModalOpen(false);
@@ -69,12 +90,18 @@ export default function Dashboard() {
     setIsModalOpen(true);
   };
 
-  const handleDelete = (id: string, name: string) => {
-    deleteWorkspace(id);
-    toast({
-      title: 'Workspace excluído',
-      description: `"${name}" foi removido.`,
-    });
+  const handleDelete = async (id: string, name: string) => {
+    try {
+      await deleteWorkspaceApi(id);
+      setWorkspaces(workspaces.filter((w) => w.id !== id));
+      toast({
+        title: 'Workspace excluído',
+        description: `"${name}" foi removido.`,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Não foi possível excluir o workspace.';
+      toast({ title: 'Erro', description: message, variant: 'destructive' });
+    }
   };
 
   const getWorkspaceChartCount = (workspaceId: string) => {
@@ -105,7 +132,11 @@ export default function Dashboard() {
       </div>
 
       {/* Workspaces Grid */}
-      {workspaces.length === 0 ? (
+      {loading ? (
+        <Card className="border-dashed">
+          <CardContent className="py-12 text-center text-muted-foreground">Carregando workspaces...</CardContent>
+        </Card>
+      ) : workspaces.length === 0 ? (
         <Card className="border-dashed">
           <CardContent className="flex flex-col items-center justify-center py-16">
             <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-secondary">

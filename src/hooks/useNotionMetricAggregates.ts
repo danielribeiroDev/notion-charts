@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import { fetchDatabaseSum } from '@/lib/notion';
-import { type ChartConfig, type ChartMetric, type NotionConnection } from '@/store/useAppStore';
+import { computeChartMetrics } from '@/lib/charts';
+import { type ChartConfig, type ChartMetric } from '@/store/useAppStore';
 
 type AggregateState = Record<string, Record<string, { loading: boolean; error?: string; total?: number; count?: number }>>;
 
@@ -16,11 +16,10 @@ function buildMetricsList(chart: ChartConfig): ChartMetric[] {
     }];
 }
 
-export function useNotionMetricAggregates(charts: ChartConfig[], notionConnection: NotionConnection | null) {
+export function useNotionMetricAggregates(charts: ChartConfig[]) {
     const [aggregates, setAggregates] = useState<AggregateState>({});
 
     useEffect(() => {
-        if (!notionConnection) return;
         if (!charts || charts.length === 0) {
             setAggregates({});
             return;
@@ -31,51 +30,37 @@ export function useNotionMetricAggregates(charts: ChartConfig[], notionConnectio
         charts.forEach((chart) => {
             if (chart.type !== 'stats' || !chart.notionDatabaseId) return;
             const metricsList = buildMetricsList(chart);
+            if (metricsList.length === 0 || !metricsList[0].valueColumn) return;
 
-            metricsList.forEach((metric) => {
-                if (!metric.valueColumn) return;
+            setAggregates((prev) => ({
+                ...prev,
+                [chart.id]: Object.fromEntries(
+                    metricsList.map((m) => [m.id, { loading: true }])
+                ),
+            }));
 
-                setAggregates((prev) => ({
-                    ...prev,
-                    [chart.id]: {
-                        ...prev[chart.id],
-                        [metric.id]: { loading: true },
-                    },
-                }));
-
-                const filterMeta = metric.filters;
-                fetchDatabaseSum(
-                    notionConnection.accessToken,
-                    chart.notionDatabaseId,
-                    metric.valueColumn,
-                    filterMeta?.property && filterMeta.value
-                        ? { property: filterMeta.property, value: filterMeta.value, type: filterMeta.type }
-                        : undefined,
-                    metric.timeRange || 'none',
-                    metric.dateProperty,
-                )
-                    .then(({ total, count }) => {
-                        setAggregates((prev) => ({
-                            ...prev,
-                            [chart.id]: {
-                                ...prev[chart.id],
-                                [metric.id]: { loading: false, total, count },
-                            },
-                        }));
-                    })
-                    .catch((error) => {
-                        const message = error instanceof Error ? error.message : 'Não foi possível calcular o total.';
-                        setAggregates((prev) => ({
-                            ...prev,
-                            [chart.id]: {
-                                ...prev[chart.id],
-                                [metric.id]: { loading: false, error: message },
-                            },
-                        }));
-                    });
-            });
+            computeChartMetrics(chart.id)
+                .then((results) => {
+                    const metricsMap: Record<string, { loading: boolean; total?: number; count?: number }> = {};
+                    for (const r of results) {
+                        metricsMap[r.metricId] = { loading: false, total: r.total, count: r.count };
+                    }
+                    setAggregates((prev) => ({
+                        ...prev,
+                        [chart.id]: { ...prev[chart.id], ...metricsMap },
+                    }));
+                })
+                .catch((error) => {
+                    const message = error instanceof Error ? error.message : 'Não foi possível calcular o total.';
+                    setAggregates((prev) => ({
+                        ...prev,
+                        [chart.id]: Object.fromEntries(
+                            metricsList.map((m) => [m.id, { loading: false, error: message }])
+                        ),
+                    }));
+                });
         });
-    }, [charts, notionConnection]);
+    }, [charts]);
 
     return { aggregates };
 }

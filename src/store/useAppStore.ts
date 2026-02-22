@@ -29,7 +29,7 @@ export interface ChartMetric {
   filters?: {
     property?: string;
     value?: string;
-    type?: 'select' | 'multi_select' | 'status' | 'checkbox' | 'formula';
+    type?: 'select' | 'multi_select' | 'status' | 'checkbox' | 'formula' | 'date' | 'people' | 'relation' | 'number';
   };
   timeRange?: 'none' | 'last7d' | 'last30d' | 'last90d' | 'last12m';
   dateProperty?: string;
@@ -41,10 +41,11 @@ export interface ChartConfig {
   name: string;
   type: 'bar' | 'line' | 'pie' | 'stats';
   notionDatabaseId: string;
+  lastSyncedAt?: string;
   // valueColumn is kept for backwards compatibility with single-metric charts
   valueColumn?: string;
   labelColumn?: string;
-  filters?: Record<string, unknown>;
+  filters?: ChartMetric['filters'];
   metrics?: ChartMetric[];
   createdAt: string;
   updatedAt: string;
@@ -52,18 +53,24 @@ export interface ChartConfig {
 
 interface AppState {
   // Auth
+  user: { email: string } | null;
+  accessToken: string | null;
+  refreshToken: string | null;
   notionConnection: NotionConnection | null;
   setNotionConnection: (connection: NotionConnection | null) => void;
+  setSession: (data: { user: { email: string } | null; accessToken: string | null; refreshToken: string | null }) => void;
   isAuthenticated: boolean;
 
   // Workspaces
   workspaces: Workspace[];
-  addWorkspace: (workspace: Omit<Workspace, 'id' | 'createdAt' | 'updatedAt'>) => Workspace;
+  setWorkspaces: (workspaces: Workspace[]) => void;
+  addWorkspace: (workspace: Workspace) => void;
   updateWorkspace: (id: string, updates: Partial<Workspace>) => void;
   deleteWorkspace: (id: string) => void;
 
   // Charts
   charts: ChartConfig[];
+  setCharts: (charts: ChartConfig[]) => void;
   addChart: (chart: Omit<ChartConfig, 'id' | 'createdAt' | 'updatedAt'>) => ChartConfig;
   updateChart: (id: string, updates: Partial<ChartConfig>) => void;
   deleteChart: (id: string) => void;
@@ -82,23 +89,20 @@ export const useAppStore = create<AppState>()(
   persist(
     (set, get) => ({
       // Auth
+      user: null,
+      accessToken: null,
+      refreshToken: null,
       notionConnection: null,
       isAuthenticated: false,
-      setNotionConnection: (connection) =>
-        set({ notionConnection: connection, isAuthenticated: !!connection }),
+      setSession: ({ user, accessToken, refreshToken }) =>
+        set({ user, accessToken, refreshToken, isAuthenticated: !!accessToken }),
+      setNotionConnection: (connection) => set({ notionConnection: connection }),
 
       // Workspaces
       workspaces: [],
-      addWorkspace: (workspace) => {
-        const newWorkspace: Workspace = {
-          ...workspace,
-          id: generateId(),
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        };
-        set((state) => ({ workspaces: [...state.workspaces, newWorkspace] }));
-        return newWorkspace;
-      },
+      setWorkspaces: (workspaces) => set({ workspaces }),
+      addWorkspace: (workspace) =>
+        set((state) => ({ workspaces: [...state.workspaces, workspace] })),
       updateWorkspace: (id, updates) =>
         set((state) => ({
           workspaces: state.workspaces.map((w) =>
@@ -113,9 +117,10 @@ export const useAppStore = create<AppState>()(
 
       // Charts
       charts: [],
+      setCharts: (charts) => set({ charts }),
       addChart: (chart) => {
         const hasMetrics = Array.isArray(chart.metrics) && chart.metrics.length > 0;
-        const metrics = hasMetrics
+        const metrics: ChartMetric[] = hasMetrics
           ? chart.metrics!.map((m) => ({ ...m, timeRange: m.timeRange ?? 'none' }))
           : [{
             id: generateId(),
@@ -142,7 +147,7 @@ export const useAppStore = create<AppState>()(
           charts: state.charts.map((c) =>
             c.id === id
               ? (() => {
-                const nextMetrics = Array.isArray(updates.metrics) && updates.metrics.length > 0
+                const nextMetrics: ChartMetric[] = Array.isArray(updates.metrics) && updates.metrics.length > 0
                   ? updates.metrics.map((m) => ({ ...m, timeRange: m.timeRange ?? 'none' }))
                   : c.metrics && c.metrics.length > 0
                     ? c.metrics
@@ -171,6 +176,9 @@ export const useAppStore = create<AppState>()(
       // Actions
       logout: () =>
         set({
+          user: null,
+          accessToken: null,
+          refreshToken: null,
           notionConnection: null,
           isAuthenticated: false,
           workspaces: [],

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { Plus, ArrowLeft, TrendingUp, Database, BarChart3 } from 'lucide-react';
+import { Plus, ArrowLeft, TrendingUp, Database, BarChart3, Link2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import {
@@ -21,13 +21,14 @@ import {
 } from '@/components/ui/select';
 import { useAppStore, type ChartConfig, type ChartMetric } from '@/store/useAppStore';
 import { useToast } from '@/hooks/use-toast';
-import { fetchNotionDatabases, type NotionDatabaseOption } from '@/lib/notion';
+import { fetchNotionDatabases, listNotionDatabases, type NotionDatabaseOption } from '@/lib/notion';
 import { useNotionDatabaseMeta } from '@/hooks/useNotionDatabaseMeta';
 import { useNotionMetricAggregates } from '@/hooks/useNotionMetricAggregates';
 import { ChartCard } from '@/components/charts/ChartCard';
 import { MetricFields } from '@/components/charts/MetricFields';
 import { timeOptions, NO_DATE_VALUE, NO_FILTER_VALUE } from '@/lib/timeRanges';
 import { createDefaultMetric, normalizeMetrics, validateMetrics } from '@/utils/metrics';
+import { fetchCharts, createChart, updateChartApi, deleteChartApi, buildConfigJson } from '@/lib/charts';
 
 const chartTypeIcons = {
   stats: TrendingUp,
@@ -35,7 +36,7 @@ const chartTypeIcons = {
 
 export default function WorkspaceCharts() {
   const { workspaceId } = useParams<{ workspaceId: string }>();
-  const { workspaces, charts, addChart, updateChart, deleteChart, notionConnection } = useAppStore();
+  const { workspaces, charts, setCharts, deleteChart, notionConnection } = useAppStore();
   const { toast } = useToast();
 
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -47,6 +48,8 @@ export default function WorkspaceCharts() {
   const [isLoadingDatabases, setIsLoadingDatabases] = useState(false);
   const [databaseError, setDatabaseError] = useState<string | null>(null);
   const [metrics, setMetrics] = useState<ChartMetric[]>([]);
+  const [isLoadingCharts, setIsLoadingCharts] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
 
   const createMetricId = () => Math.random().toString(36).slice(2, 9);
 
@@ -65,6 +68,15 @@ export default function WorkspaceCharts() {
   const workspace = workspaces.find((w) => w.id === workspaceId);
   const workspaceCharts = useMemo(() => charts.filter((c) => c.workspaceId === workspaceId), [charts, workspaceId]);
 
+  const notionAuthUrl = useMemo(() => {
+    if (!workspaceId) return null;
+    const clientId = import.meta.env.VITE_NOTION_CLIENT_ID;
+    const redirectUri = import.meta.env.VITE_NOTION_REDIRECT_URI;
+    if (!clientId || !redirectUri) return null;
+    const state = `workspaceId=${encodeURIComponent(workspaceId)}`;
+    return `https://api.notion.com/v1/oauth/authorize?client_id=${encodeURIComponent(clientId)}&response_type=code&owner=user&redirect_uri=${encodeURIComponent(redirectUri)}&state=${encodeURIComponent(state)}`;
+  }, [workspaceId]);
+
   const {
     numberProps,
     dateProps,
@@ -75,16 +87,38 @@ export default function WorkspaceCharts() {
     numberPropsError,
     datePropsError,
     filterPropsError,
-  } = useNotionDatabaseMeta({ notionConnection, databaseId: selectedDatabaseId, enabled: isModalOpen });
+  } = useNotionDatabaseMeta({ notionConnection, workspaceId, databaseId: selectedDatabaseId, enabled: isModalOpen });
 
-  const { aggregates } = useNotionMetricAggregates(workspaceCharts, notionConnection);
+  const { aggregates } = useNotionMetricAggregates(workspaceCharts);
+
+  useEffect(() => {
+    const load = async () => {
+      setIsLoadingCharts(true);
+      try {
+        const data = await fetchCharts();
+        setCharts(data);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Não foi possível carregar gráficos.';
+        toast({ title: 'Erro', description: message, variant: 'destructive' });
+      } finally {
+        setIsLoadingCharts(false);
+      }
+    };
+    load();
+  }, [setCharts, toast]);
 
   useEffect(() => {
     if (!isModalOpen || !notionConnection) return;
     if (databases.length > 0 && !databaseError) return;
     setIsLoadingDatabases(true);
     setDatabaseError(null);
-    fetchNotionDatabases(notionConnection.accessToken)
+
+    const isServerManaged = notionConnection.accessToken === 'server-managed';
+    const loadPromise = isServerManaged && workspaceId
+      ? listNotionDatabases({ workspaceId }).then((page) => page.items)
+      : fetchNotionDatabases(notionConnection.accessToken);
+
+    loadPromise
       .then((data) => setDatabases(data))
       .catch((error) => {
         const message = error instanceof Error ? error.message : 'Não foi possível carregar bases do Notion.';
@@ -96,7 +130,7 @@ export default function WorkspaceCharts() {
         });
       })
       .finally(() => setIsLoadingDatabases(false));
-  }, [isModalOpen, notionConnection, databases.length, databaseError, toast]);
+  }, [isModalOpen, notionConnection, databases.length, databaseError, toast, workspaceId]);
 
   useEffect(() => {
     if (!isModalOpen || !selectedDatabaseId) {
@@ -134,7 +168,7 @@ export default function WorkspaceCharts() {
     );
   }
 
-  const handleCreateChart = () => {
+  const handleCreateChart = async () => {
     if (!chartName.trim()) {
       toast({
         title: 'Nome obrigatório',
@@ -184,37 +218,57 @@ export default function WorkspaceCharts() {
       dateProperty: metric.dateProperty || undefined,
     }));
 
-    if (editingChart) {
-      updateChart(editingChart, {
-        name: chartName.trim(),
-        type: chartType,
-        notionDatabaseId: selectedDatabaseId,
-        metrics: metricsPayload,
-      });
-      toast({
-        title: 'Gráfico atualizado',
-        description: `"${chartName}" foi atualizado com sucesso.`,
-      });
-    } else {
-      addChart({
-        workspaceId: workspaceId!,
-        name: chartName.trim(),
-        type: chartType,
-        notionDatabaseId: selectedDatabaseId,
-        metrics: metricsPayload,
-      });
-      toast({
-        title: 'Gráfico criado',
-        description: `"${chartName}" foi criado com sucesso.`,
-      });
-    }
+    const configJson = buildConfigJson({
+      name: chartName.trim(),
+      type: chartType,
+      metrics: metricsPayload,
+    });
 
-    setIsModalOpen(false);
-    setChartName('');
-    setChartType('stats');
-    setSelectedDatabaseId('');
-    setMetrics([]);
-    setEditingChart(null);
+    setIsSaving(true);
+    try {
+      if (editingChart) {
+        const updated = await updateChartApi(editingChart, {
+          notionDatabaseId: selectedDatabaseId,
+          configJson,
+        });
+        setCharts(charts.map((c) => (c.id === updated.id ? updated : c)));
+        toast({
+          title: 'Gráfico atualizado',
+          description: `"${chartName}" foi atualizado com sucesso.`,
+        });
+      } else {
+        const created = await createChart({
+          workspaceId: workspaceId!,
+          notionDatabaseId: selectedDatabaseId,
+          configJson,
+        });
+        setCharts([...charts, created]);
+        toast({
+          title: 'Gráfico criado',
+          description: `"${chartName}" foi criado com sucesso.`,
+        });
+      }
+
+      setIsModalOpen(false);
+      setChartName('');
+      setChartType('stats');
+      setSelectedDatabaseId('');
+      setMetrics([]);
+      setEditingChart(null);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Não foi possível salvar o gráfico.';
+      if (message.includes('Free plan allows only 1 chart')) {
+        toast({
+          title: 'Limite do plano',
+          description: 'O plano gratuito permite apenas 1 gráfico. Faça upgrade para PRO.',
+          variant: 'destructive',
+        });
+      } else {
+        toast({ title: 'Erro ao salvar', description: message, variant: 'destructive' });
+      }
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const handleEdit = (chart: ChartConfig) => {
@@ -236,12 +290,18 @@ export default function WorkspaceCharts() {
     setIsModalOpen(true);
   };
 
-  const handleDelete = (id: string, name: string) => {
-    deleteChart(id);
-    toast({
-      title: 'Gráfico excluído',
-      description: `"${name}" foi removido.`,
-    });
+  const handleDelete = async (id: string, name: string) => {
+    try {
+      await deleteChartApi(id);
+      deleteChart(id);
+      toast({
+        title: 'Gráfico excluído',
+        description: `"${name}" foi removido.`,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Não foi possível excluir o gráfico.';
+      toast({ title: 'Erro ao excluir', description: message, variant: 'destructive' });
+    }
   };
 
   const handleCopyEmbedLink = (chartId: string) => {
@@ -268,25 +328,41 @@ export default function WorkspaceCharts() {
               Gerencie os gráficos deste workspace
             </p>
           </div>
-          <Button
-            onClick={() => {
-              setEditingChart(null);
-              setChartName('');
-              setChartType('stats');
-              setSelectedDatabaseId('');
-              setMetrics([]);
-              setIsModalOpen(true);
-            }}
-            className="neon-glow"
-          >
-            <Plus className="mr-2 h-4 w-4" />
-            Add Chart
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              disabled={!notionAuthUrl}
+              onClick={() => notionAuthUrl && (window.location.href = notionAuthUrl)}
+            >
+              <Link2 className="mr-2 h-4 w-4" />
+              {notionConnection ? 'Reconectar Notion' : 'Conectar Notion'}
+            </Button>
+            <Button
+              onClick={() => {
+                setEditingChart(null);
+                setChartName('');
+                setChartType('stats');
+                setSelectedDatabaseId('');
+                setMetrics([]);
+                setIsModalOpen(true);
+              }}
+              className="neon-glow"
+            >
+              <Plus className="mr-2 h-4 w-4" />
+              Add Chart
+            </Button>
+          </div>
         </div>
       </div>
 
       {/* Charts Grid */}
-      {workspaceCharts.length === 0 ? (
+      {isLoadingCharts ? (
+        <Card className="border-dashed">
+          <CardContent className="flex flex-col items-center justify-center py-16">
+            <p className="text-muted-foreground">Carregando gráficos...</p>
+          </CardContent>
+        </Card>
+      ) : workspaceCharts.length === 0 ? (
         <Card className="border-dashed">
           <CardContent className="flex flex-col items-center justify-center py-16">
             <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-secondary">
@@ -475,8 +551,11 @@ export default function WorkspaceCharts() {
             <Button variant="outline" onClick={() => setIsModalOpen(false)}>
               Cancelar
             </Button>
-            <Button onClick={handleCreateChart} className="neon-glow">
-              {editingChart ? 'Salvar' : 'Criar Gráfico'}
+            <Button onClick={handleCreateChart} className="neon-glow" disabled={isSaving}>
+              {isSaving
+                ? 'Salvando...'
+                : editingChart ? 'Salvar' : 'Criar Gráfico'
+              }
             </Button>
           </DialogFooter>
         </DialogContent>

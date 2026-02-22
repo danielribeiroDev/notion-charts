@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import {
+    fetchDatabaseSchema,
     fetchDatabaseDateProperties,
     fetchDatabaseFilterableProperties,
     fetchDatabaseNumberProperties,
@@ -11,6 +12,7 @@ import { type NotionConnection } from '@/store/useAppStore';
 
 interface UseNotionDatabaseMetaParams {
     notionConnection: NotionConnection | null;
+    workspaceId?: string;
     databaseId: string;
     enabled: boolean;
 }
@@ -42,49 +44,133 @@ const initialState: MetaState = {
 /**
  * Encapsula carregamento de colunas da database (número, data, filtros) para reduzir efeitos no componente.
  */
-export function useNotionDatabaseMeta({ notionConnection, databaseId, enabled }: UseNotionDatabaseMetaParams) {
+export function useNotionDatabaseMeta({ notionConnection, workspaceId, databaseId, enabled }: UseNotionDatabaseMetaParams) {
     const [state, setState] = useState<MetaState>(initialState);
 
     useEffect(() => {
         if (!enabled) return;
-        if (!notionConnection || !databaseId) {
+        if (!workspaceId || !databaseId) {
             setState(initialState);
             return;
         }
 
-        setState(initialState);
+        let cancelled = false;
+        setState({
+            ...initialState,
+            isLoadingNumberProps: true,
+            isLoadingDateProps: true,
+            isLoadingFilterProps: true,
+        });
 
-        setState((prev) => ({ ...prev, isLoadingNumberProps: true }));
-        fetchDatabaseNumberProperties(notionConnection.accessToken, databaseId)
-            .then((props) => setState((prev) => ({ ...prev, numberProps: props })))
-            .catch((error) => {
-                const message = error instanceof Error ? error.message : 'Não foi possível carregar colunas numéricas.';
-                setState((prev) => ({ ...prev, numberPropsError: message }));
-            })
-            .finally(() => setState((prev) => ({ ...prev, isLoadingNumberProps: false })));
-
-        setState((prev) => ({ ...prev, isLoadingDateProps: true }));
-        fetchDatabaseDateProperties(notionConnection.accessToken, databaseId)
-            .then((props) => setState((prev) => ({ ...prev, dateProps: props })))
-            .catch((error) => {
-                const message = error instanceof Error ? error.message : 'Não foi possível carregar colunas de data.';
-                setState((prev) => ({ ...prev, datePropsError: message }));
-            })
-            .finally(() => setState((prev) => ({ ...prev, isLoadingDateProps: false })));
-
-        setState((prev) => ({ ...prev, isLoadingFilterProps: true }));
-        fetchDatabaseFilterableProperties(notionConnection.accessToken, databaseId)
-            .then((props) => setState((prev) => ({
+        const setAllLoadingFalse = () => {
+            if (cancelled) return;
+            setState((prev) => ({
                 ...prev,
-                // Remove quaisquer colunas numéricas da lista de filtros
-                filterProps: props.filter((prop) => !prev.numberProps.some((n) => n.name === prop.name)),
-            })))
-            .catch((error) => {
-                const message = error instanceof Error ? error.message : 'Não foi possível carregar filtros.';
-                setState((prev) => ({ ...prev, filterPropsError: message }));
-            })
-            .finally(() => setState((prev) => ({ ...prev, isLoadingFilterProps: false })));
-    }, [enabled, notionConnection, databaseId]);
+                isLoadingNumberProps: false,
+                isLoadingDateProps: false,
+                isLoadingFilterProps: false,
+            }));
+        };
+
+        const useBackend = !notionConnection || notionConnection.accessToken === 'server-managed';
+
+        if (useBackend) {
+            fetchDatabaseSchema(workspaceId, databaseId)
+                .then((schema) => {
+                    if (cancelled) return;
+                    const numberProps = schema.properties
+                        .filter((prop) => prop.type === 'number')
+                        .map((prop) => ({ name: prop.name, type: 'number' as const }));
+
+                    const dateProps = schema.properties
+                        .filter((prop) => prop.type === 'date')
+                        .map((prop) => ({ name: prop.name, type: 'date' as const }));
+
+                    const filterProps = schema.properties
+                        .filter((prop) => prop.type === 'select' || prop.type === 'multi_select' || prop.type === 'status' || prop.type === 'checkbox' || prop.type === 'formula')
+                        .map((prop) => ({
+                            name: prop.name,
+                            type: prop.type as NotionFilterProperty['type'],
+                            options: prop.type === 'checkbox'
+                                ? [{ name: 'true' }, { name: 'false' }]
+                                : prop.type === 'formula'
+                                    ? []
+                                    : (prop.options ?? []).map((opt) => ({ id: opt.id, name: opt.name, color: opt.color })),
+                        }));
+
+                    setState((prev) => ({
+                        ...prev,
+                        numberProps,
+                        dateProps,
+                        filterProps,
+                    }));
+                })
+                .catch((error) => {
+                    if (cancelled) return;
+                    const message = error instanceof Error ? error.message : 'Não foi possível carregar o schema da database.';
+                    setState((prev) => ({
+                        ...prev,
+                        numberPropsError: message,
+                        datePropsError: message,
+                        filterPropsError: message,
+                    }));
+                })
+                .finally(setAllLoadingFalse);
+
+            return () => {
+                cancelled = true;
+            };
+        }
+
+        const token = notionConnection.accessToken;
+
+        (async () => {
+            let numberProps: NotionNumberProperty[] = [];
+            let dateProps: NotionDateProperty[] = [];
+            let filterProps: NotionFilterProperty[] = [];
+            let numberPropsError: string | null = null;
+            let datePropsError: string | null = null;
+            let filterPropsError: string | null = null;
+
+            try {
+                numberProps = await fetchDatabaseNumberProperties(token, databaseId);
+            } catch (error) {
+                numberPropsError = error instanceof Error ? error.message : 'Não foi possível carregar colunas numéricas.';
+            }
+
+            try {
+                dateProps = await fetchDatabaseDateProperties(token, databaseId);
+            } catch (error) {
+                datePropsError = error instanceof Error ? error.message : 'Não foi possível carregar colunas de data.';
+            }
+
+            try {
+                const props = await fetchDatabaseFilterableProperties(token, databaseId);
+                filterProps = props.filter((prop) => !numberProps.some((n) => n.name === prop.name));
+            } catch (error) {
+                filterPropsError = error instanceof Error ? error.message : 'Não foi possível carregar filtros.';
+            }
+
+            if (cancelled) return;
+
+            setState((prev) => ({
+                ...prev,
+                numberProps,
+                dateProps,
+                filterProps,
+                numberPropsError,
+                datePropsError,
+                filterPropsError,
+                isLoadingNumberProps: false,
+                isLoadingDateProps: false,
+                isLoadingFilterProps: false,
+            }));
+        })();
+
+        return () => {
+            cancelled = true;
+        };
+    }, [enabled, workspaceId, notionConnection, databaseId]);
 
     return state;
 }

@@ -15,6 +15,7 @@ import Dashboard from "@/pages/Dashboard";
 import WorkspaceCharts from "@/pages/WorkspaceCharts";
 import EmbedChart from "@/pages/EmbedChart";
 import NotFound from "@/pages/NotFound";
+import NotionCallback from "@/pages/NotionCallback";
 
 const queryClient = new QueryClient();
 
@@ -24,10 +25,11 @@ function AppRoutes() {
   return (
     <Routes>
       {/* Public routes */}
-      <Route 
-        path="/login" 
-        element={isAuthenticated ? <Navigate to="/dashboard" replace /> : <Login />} 
+      <Route
+        path="/login"
+        element={isAuthenticated ? <Navigate to="/dashboard" replace /> : <Login />}
       />
+      <Route path="/notion/callback" element={<NotionCallback />} />
       <Route path="/embed/:chartId" element={<EmbedChart />} />
 
       {/* Protected routes with layout */}
@@ -42,7 +44,7 @@ function AppRoutes() {
 
       {/* Redirects */}
       <Route path="/" element={<Navigate to={isAuthenticated ? "/dashboard" : "/login"} replace />} />
-      
+
       {/* Catch-all */}
       <Route path="*" element={<NotFound />} />
     </Routes>

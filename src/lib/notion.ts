@@ -1,7 +1,19 @@
-import { NotionConnection } from '@/store/useAppStore';
+import { NotionConnection, useAppStore } from '@/store/useAppStore';
+import { apiFetch } from './api';
 
 const NOTION_BASE_URL = import.meta.env.VITE_NOTION_PROXY_URL ?? 'https://api.notion.com/v1';
 const NOTION_VERSION = '2022-06-28';
+const BACKEND_NOTION_INTEGRATION_URL = '/api/integrations/notion/exchange';
+
+type Envelope<T> = { data: T | T[]; meta?: unknown };
+
+function unwrapFirst<T>(enveloped: Envelope<T>): T {
+    const payload = Array.isArray(enveloped?.data) ? enveloped.data[0] : enveloped?.data;
+    if (payload === undefined || payload === null) {
+        throw new Error('Resposta inesperada do servidor (corpo vazio).');
+    }
+    return payload as T;
+}
 
 export interface NotionPageOption {
     id: string;
@@ -17,6 +29,12 @@ export interface NotionDatabaseOption {
     title: string;
     icon?: string;
     url?: string;
+}
+
+export interface NotionDatabasesPage {
+    items: NotionDatabaseOption[];
+    hasMore: boolean;
+    nextCursor?: string | null;
 }
 
 export interface NotionNumberProperty {
@@ -39,6 +57,19 @@ export interface NotionFilterProperty {
     name: string;
     type: 'select' | 'multi_select' | 'status' | 'checkbox' | 'formula';
     options: NotionSelectOption[];
+}
+
+export interface NotionSchemaProperty {
+    id: string;
+    name: string;
+    type: string;
+    options?: NotionSelectOption[];
+}
+
+export interface NotionDatabaseSchema {
+    id: string;
+    title: string;
+    properties: NotionSchemaProperty[];
 }
 
 export type NotionTimeRange = 'none' | 'last7d' | 'last30d' | 'last90d' | 'last12m';
@@ -109,6 +140,21 @@ export async function verifyNotionIntegration(accessToken: string): Promise<Noti
         workspaceIcon: botInfo.workspace_icon || data.avatar_url,
         botId: data.id,
     };
+}
+
+export async function exchangeNotionCode(code: string, workspaceId: string) {
+    const { accessToken } = useAppStore.getState();
+    if (!accessToken) {
+        throw new Error('É necessário estar autenticado para conectar o Notion.');
+    }
+    const response = await apiFetch<Envelope<{
+        ok: boolean;
+        workspaceId: string;
+        botId?: string;
+        notionWorkspaceId?: string;
+    }>>(BACKEND_NOTION_INTEGRATION_URL, 'POST', { code, workspaceId });
+
+    return unwrapFirst(response);
 }
 
 function extractPageTitle(page: unknown) {
@@ -216,6 +262,22 @@ export async function fetchNotionDatabases(accessToken: string): Promise<NotionD
             url: typeof dbData.url === 'string' ? dbData.url : undefined,
         } as NotionDatabaseOption;
     });
+}
+
+export async function listNotionDatabases(params: { workspaceId: string; startCursor?: string; pageSize?: number; }): Promise<NotionDatabasesPage> {
+    const { workspaceId, startCursor, pageSize } = params;
+    const searchParams = new URLSearchParams({ workspaceId });
+    if (startCursor) searchParams.set('startCursor', startCursor);
+    if (typeof pageSize === 'number') searchParams.set('pageSize', String(pageSize));
+
+    const response = await apiFetch<Envelope<NotionDatabasesPage>>(`/api/integrations/notion/databases?${searchParams.toString()}`);
+    return unwrapFirst(response);
+}
+
+export async function fetchDatabaseSchema(workspaceId: string, databaseId: string): Promise<NotionDatabaseSchema> {
+    const searchParams = new URLSearchParams({ workspaceId, databaseId });
+    const response = await apiFetch<Envelope<NotionDatabaseSchema>>(`/api/integrations/notion/schema?${searchParams.toString()}`);
+    return unwrapFirst(response);
 }
 
 export async function fetchDatabaseNumberProperties(accessToken: string, databaseId: string): Promise<NotionNumberProperty[]> {
