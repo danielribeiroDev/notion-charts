@@ -7,28 +7,38 @@ import { UpdateWorkspaceDto } from './dto/update-workspace.dto';
 export class WorkspacesService {
     constructor(private readonly prisma: PrismaService) { }
 
-    list(userId: string) {
-        return this.prisma.workspace.findMany({
+    async list(userId: string) {
+        const workspaces = await this.prisma.workspace.findMany({
             where: { userId },
             orderBy: { createdAt: 'desc' },
+            include: { credential: { select: { id: true } } },
         });
+        return workspaces.map(({ credential, ...ws }) => ({
+            ...ws,
+            notionConnected: credential !== null,
+        }));
     }
 
     async getById(userId: string, id: string) {
-        const workspace = await this.prisma.workspace.findFirst({ where: { id, userId } });
-        if (!workspace) {
+        const result = await this.prisma.workspace.findFirst({
+            where: { id, userId },
+            include: { credential: { select: { id: true } } },
+        });
+        if (!result) {
             throw new NotFoundException('Workspace not found');
         }
-        return workspace;
+        const { credential, ...workspace } = result;
+        return { ...workspace, notionConnected: credential !== null };
     }
 
-    create(userId: string, dto: CreateWorkspaceDto) {
-        return this.prisma.workspace.create({
+    async create(userId: string, dto: CreateWorkspaceDto) {
+        const workspace = await this.prisma.workspace.create({
             data: {
                 name: dto.name,
                 userId,
             },
         });
+        return { ...workspace, notionConnected: false };
     }
 
     async update(userId: string, id: string, dto: UpdateWorkspaceDto) {
@@ -39,7 +49,7 @@ export class WorkspacesService {
         if (updated.count === 0) {
             throw new NotFoundException('Workspace not found');
         }
-        return this.prisma.workspace.findUnique({ where: { id } });
+        return this.getById(userId, id);
     }
 
     async remove(userId: string, id: string) {

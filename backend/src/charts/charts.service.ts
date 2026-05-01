@@ -96,4 +96,25 @@ export class ChartsService {
             user.sub,
         );
     }
+
+    async computePublic(chartId: string) {
+        const chart = await this.prisma.chart.findUnique({
+            where: { id: chartId },
+        });
+        if (!chart) {
+            throw new NotFoundException('Chart not found');
+        }
+
+        const config = chart.configJson as Record<string, unknown>;
+        const metrics = Array.isArray(config?.metrics) ? config.metrics : [];
+        if (metrics.length === 0) return { chart, metrics: [] };
+
+        const computedMetrics = await this.notionService.aggregateMetricPublic({
+            workspaceId: chart.workspaceId,
+            databaseId: chart.notionDatabaseId,
+            metrics: metrics as any,
+        });
+
+        return { chart, metrics: computedMetrics };
+    }
 }

@@ -27,6 +27,22 @@
 
 ## Local setup (project-specific)
 
+### Docker (Postgres + Redis)
+
+From the repo root, start the infra services:
+
+```bash
+docker compose up -d
+```
+
+The defaults match [backend/.env](backend/.env). If you change `DATABASE_URL` or `REDIS_URL`, update the compose config or ports accordingly.
+
+Stop services with:
+
+```bash
+docker compose down
+```
+
 - Install deps: `npm install`
 - Apply migrations: `npx prisma migrate dev`
 - Seed demo data: `npm run prisma:seed`

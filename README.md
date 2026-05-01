@@ -1,104 +1,110 @@
-# Welcome to your Lovable project
+# ![Project Screenshot](./readme-assets/images/logo.png)
 
-## Project info
 
-**URL**: https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID
+A platform to visualize, analyze, and embed Notion data.
 
-## How can I edit this code?
+## Overview
 
-There are several ways of editing your application.
+NotionCharts connects to Notion databases to generate dynamic visualizations. The application enables users to authenticate their Notion workspace, configure custom charts based on database properties, and generate embeddable components for use in external websites or applications.
 
-**Use Lovable**
+## Core Features
 
-Simply visit the [Lovable Project](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and start prompting.
+* **Notion Integration:** Authenticate and grant read-access to specific Notion pages and databases securely.
+* **Workspace Organization:** Group and manage charts within dedicated workspaces to maintain structured data overviews.
+* **Metric Configuration:**
+  * Bind chart metrics directly to specific numeric columns within a Notion database.
+  * Apply time filters utilizing date columns to calculate specific periods (e.g., "Last year").
+  * Implement property filters to isolate exact data points (e.g., filtering by "Transaction type: Income").
+* **Chart Types:** Construct multi-metric visual components, such as comprehensive Stats Cards.
+* **Embed Functionality:** Export generated charts for embedding in external web environments.
 
-Changes made via Lovable will be committed automatically to this repo.
+## Usage Flow
 
-**Use your preferred IDE**
+1. **Workspace Creation:** Establish a workspace to organize related charts.
+2. **Notion Authorization:** Connect the application to Notion and select the target databases for data retrieval.
+3. **Chart Initialization:** Create a new chart and associate it with an authorized database.
+4. **Metric Definition:** Configure individual metrics by selecting numeric values, date ranges, and applicable property filters.
+5. **Visualization:** Render the configured charts, which maintain synchronization with the underlying Notion data.
 
-If you want to work locally using your own IDE, you can clone this repo and push changes. Pushed changes will also be reflected in Lovable.
+![Project Screenshot](./readme-assets/images/notion-charts-flow.png)
 
-The only requirement is having Node.js & npm installed - [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating)
+## Getting Started
 
-Follow these steps:
+### Requirements
 
-```sh
-# Step 1: Clone the repository using the project's Git URL.
-git clone <YOUR_GIT_URL>
+- Node.js LTS (18+ recommended) and npm
+- Docker Desktop or Docker Engine with Docker Compose v2
+- Notion OAuth credentials (optional, only needed for live Notion integration)
 
-# Step 2: Navigate to the project directory.
-cd <YOUR_PROJECT_NAME>
+### Quick Start (Local)
 
-# Step 3: Install the necessary dependencies.
-npm i
+1. Start Postgres and Redis:
 
-# Step 4: Start the development server with auto-reloading and an instant preview.
+```bash
+docker compose up -d
+```
+
+2. Backend setup:
+
+```bash
+cd backend
+npm install
+```
+
+Ensure [backend/.env](backend/.env) exists (copy from [backend/.env.example](backend/.env.example) if needed), then:
+
+```bash
+npx prisma migrate dev
+npm run prisma:seed
+npm run start:dev
+```
+
+3. Frontend setup (new terminal):
+
+```bash
+cd frontend
+npm install
 npm run dev
 ```
 
-**Edit a file directly in GitHub**
+Update [frontend/.env](frontend/.env) with your local values before running the UI.
 
-- Navigate to the desired file(s).
-- Click the "Edit" button (pencil icon) at the top right of the file view.
-- Make your changes and commit the changes.
+### Environment Variables
 
-**Use GitHub Codespaces**
+Backend (edit [backend/.env](backend/.env)):
 
-- Navigate to the main page of your repository.
-- Click on the "Code" button (green button) near the top right.
-- Select the "Codespaces" tab.
-- Click on "New codespace" to launch a new Codespace environment.
-- Edit files directly within the Codespace and commit and push your changes once you're done.
+- `DATABASE_URL`
+- `REDIS_URL`
+- `JWT_SECRET`, `JWT_REFRESH_SECRET`, `JWT_ACCESS_EXPIRES`, `JWT_REFRESH_EXPIRES`
+- `CRYPTO_KEY`
+- `NOTION_CLIENT_ID`, `NOTION_CLIENT_SECRET`, `NOTION_REDIRECT_URI`, `NOTION_API_VERSION`
 
-## What technologies are used for this project?
+Frontend (edit [frontend/.env](frontend/.env)):
 
-This project is built with:
+- `VITE_API_BASE_URL` (default: `http://localhost:3000`)
+- `VITE_NOTION_PROXY_URL` (default: `/api/notion`)
+- `VITE_NOTION_CLIENT_ID`
+- `VITE_NOTION_REDIRECT_URI`
 
-- Vite
-- TypeScript
-- React
-- shadcn-ui
-- Tailwind CSS
+### Ports
 
-## How can I deploy this project?
+- API: `http://localhost:3000`
+- Web: `http://localhost:5173`
+- Postgres: `localhost:5432`
+- Redis: `localhost:6379`
 
-Simply open [Lovable](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and click on Share -> Publish.
+## Contributing
 
-## Can I connect a custom domain to my Lovable project?
+Issues and pull requests are welcome. Please:
 
-Yes, you can!
+- Keep changes focused and well-scoped
+- Include clear descriptions and reproduction steps (for bugs)
+- Run the relevant lint/tests before submitting
 
-To connect a domain, navigate to Project > Settings > Domains and click Connect Domain.
+## Support
 
-Read more here: [Setting up a custom domain](https://docs.lovable.dev/features/custom-domain#custom-domain)
+If you run into problems, open an issue with logs, steps to reproduce, and your environment details.
 
-NOTION
-OAuth Client ID
-304d872b-594c-80d5-9cb2-00370890e694
+## License
 
-OAuth Client Secret
-secret_60pqusQ5sL0lpu4IqIcvS3mO1in26RkVfLR7cMyF9qs
-
-Authorization URL
-https://api.notion.com/v1/oauth/authorize?client_id=304d872b-594c-80d5-9cb2-00370890e694&response_type=code&owner=user&redirect_uri=http%3A%2F%2Flocalhost%3A5173%2Fnotion%2Fcallback
-
-OAuth domains & URIs
-Redirect URIs
-http://localhost:5173/notion/callback
-
-Continuar com Metrics
-
-Agora, precisamos computar o chart para renderizar os valores das métricas com base no que foi definido pelo usuário em configjson
-
-Precisamos criar um serviço que é capaz de computar as métricas definidas em um chart pelo usuário, ou seja, precisamos utilizar o configJson e notionDatabaseId para recuperar os dados necessários e calcular as métricas. As métricas calculadas devem preencher o chart que fica no dashboard de charts do usuário (preenchendo-o).
-
-To fix:
-{
-    Conexão com notion: verificar se a conexão é longa e duradoura (não expirar como jwt token - evitar ficar reconectando semrpe)
-
-    Editar chart: ao editar o chart, o char atual não é mostrado com as propriedades atuais, ao invés disso vem default - deve vir com as configurações atuais setadas
-}
-
-I want the Notion connection to persist for as long as possible to avoid short, repetitive reconnections. Currently, after a period of time—at least on the frontend—the connection becomes invalid, which prevents me from selecting a Notion database when trying to create a chart. we need to show the 'Connect' button in each workspace, not before it. Red if it is not already conected, and green otherwise (but with recconection option). 
-
-We need to check when rendering workspaces if the notion connection is true/valid (backend response). If not, show "connect to notion" button, if yes show a green notion connected button (user can reconect with notion if want pressing this button). I saw in notionConnection: botId is being stored in localstorage, if it is sensitive information, it must be replaced or remove.
+This project is licensed under the MIT License. See [LICENSE](LICENSE).

@@ -189,6 +189,48 @@ export class NotionIntegrationService {
         }));
     }
 
+    async aggregateMetricPublic(dto: Omit<AggregateMetricsDto, 'forceRefresh'>) {
+        const { workspaceId, databaseId, metrics } = dto;
+        if (!workspaceId || !databaseId) {
+            throw new BadRequestException('workspaceId and databaseId are required');
+        }
+
+        const token = await this.getAccessTokenForWorkspacePublic(workspaceId);
+
+        const results: Array<AggregationResult & { source: 'cache' | 'api' }> = [];
+
+        for (const metric of metrics) {
+            const cacheKey = buildAggregationCacheKey(workspaceId, databaseId, metric);
+
+            const cached = await this.redis.get<AggregationResult & { source: 'cache' | 'api' }>(cacheKey);
+            if (cached) {
+                results.push({ ...cached, source: 'cache' });
+                continue;
+            }
+
+            try {
+                const aggregated = await this.aggregation.aggregate(token, databaseId, metric);
+                const payload: AggregationResult & { source: 'cache' | 'api' } = {
+                    ...aggregated,
+                    source: 'api',
+                };
+                await this.redis.set(cacheKey, payload, this.aggregationTtlSeconds);
+                results.push(payload);
+            } catch (err) {
+                this.handleNotionError(err);
+            }
+        }
+
+        return results.map((result) => ({
+            metricId: result.metricId,
+            total: result.total,
+            count: result.count,
+            processedPages: result.pagesProcessed,
+            isPartial: result.hitPageLimit,
+            source: result.source,
+        }));
+    }
+
     async getDatabaseSchema(query: GetDatabaseSchemaDto, userId: string) {
         const { workspaceId, databaseId } = query;
         if (!workspaceId || !databaseId) {
@@ -324,10 +366,10 @@ export class NotionIntegrationService {
     private handleNotionError(err: unknown): never {
         if (err instanceof NotionHttpError) {
             if (err.status === 401 || err.status === 403) {
-                throw new ForbiddenException('Falha na autenticação com o provedor externo');
+                throw new ForbiddenException('Authentication failed with external provider');
             }
 
-            throw new BadRequestException('Erro ao consultar provedor externo');
+            throw new BadRequestException('Error while contacting external provider');
         }
 
         throw err;
@@ -345,6 +387,15 @@ export class NotionIntegrationService {
             throw new ForbiddenException('Workspace not found or not owned');
         }
 
+        const credential = await this.prisma.notionCredential.findUnique({ where: { workspaceId } });
+        if (!credential) {
+            throw new NotFoundException('No Notion credential stored for this workspace');
+        }
+
+        return this.crypto.decrypt(credential.encryptedAccessToken);
+    }
+
+    private async getAccessTokenForWorkspacePublic(workspaceId: string) {
         const credential = await this.prisma.notionCredential.findUnique({ where: { workspaceId } });
         if (!credential) {
             throw new NotFoundException('No Notion credential stored for this workspace');
